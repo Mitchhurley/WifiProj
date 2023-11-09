@@ -1,6 +1,7 @@
 package wifi;
 import rf.RF;
 import java.io.PrintWriter;
+import java.util.concurrent.ArrayBlockingQueue;
 
 /**
  * Uses the simulated RF layer to listen for messages and store them in the transmission
@@ -13,11 +14,12 @@ public class Reader implements Runnable
     private RF theRF;
     private Transmission t;
     private PrintWriter output;
+    private ArrayBlockingQueue<Transmission> incomingQueue;
     
-    public Reader(RF theRF, PrintWriter output, Transmission t){
+    public Reader(ArrayBlockingQueue<Transmission> incomingQueue,RF theRF, PrintWriter output){
         this.theRF = theRF;
         this.output = output;
-        this.t = t;
+        this.incomingQueue = incomingQueue;
     }
     
     @Override
@@ -25,7 +27,7 @@ public class Reader implements Runnable
         // Call receive and block until a transmission arrives
         output.println("Listening for a transmission...");
         byte[] receivedPacket = theRF.receive();
-        
+        //TODO move above to linklayerclass?
         // Extract dest and source adresses
         short destAddr = (short) ((receivedPacket[2] & 0xFF) | ((receivedPacket[3] & 0xFF) << 8));
         short sourceAddr = (short) ((receivedPacket[4] & 0xFF) | ((receivedPacket[5] & 0xFF) << 8));

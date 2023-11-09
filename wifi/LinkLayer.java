@@ -14,8 +14,10 @@ public class LinkLayer implements Dot11Interface
     private RF theRF;           // You'll need one of these eventually
     private short ourMAC;       // Our MAC address
     private PrintWriter output; // The output stream we'll write to
-    private ArrayBlockingQueue<TransmissionData> queue;
+    private ArrayBlockingQueue<TransmissionData> outgoingQueue;
+    private ArrayBlockingQueue<Transmission> incomingQueue;
     private Writer writer;
+    private Reader reader;
     
 
     /**
@@ -28,9 +30,12 @@ public class LinkLayer implements Dot11Interface
         this.ourMAC = ourMAC;
         this.output = output;      
         theRF = new RF(null, null);
-        this.queue = new ArrayBlockingQueue<TransmissionData>(10);
-        this.writer = new Writer(queue, new RF(null, null), output, ourMAC);
+        this.outgoingQueue = new ArrayBlockingQueue<TransmissionData>(10);
+        this.incomingQueue = new ArrayBlockingQueue<Transmission>(10);
+        this.writer = new Writer(outgoingQueue, theRF, output, ourMAC);
+        this.reader = new Reader(incomingQueue, theRF, output);
         Thread writerThread = new Thread(writer);
+        Thread readerThread = new Thread(reader);
         writerThread.start(); // Start the writer thread
         output.println("LinkLayer: Constructor ran.");
     }
@@ -45,7 +50,7 @@ public class LinkLayer implements Dot11Interface
 
     	TransmissionData transmissionData = new TransmissionData(dest, data, len);
         try {
-            queue.put(transmissionData);
+            outgoingQueue.put(transmissionData);
             return len;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -60,7 +65,7 @@ public class LinkLayer implements Dot11Interface
     
     public int recv(Transmission t) {
         // Create the Reader thread
-        Reader myReader = new Reader(theRF, output, t);
+        Reader myReader = new Reader(incomingQueue, theRF, output);
         
         // Start the Reader thread
         Thread readerThread = new Thread(myReader);
