@@ -10,6 +10,7 @@ package wifi;
 public class TransmissionData {
 	//Short representing destination mac address
     private final short dest;
+    //Byte array of actual data
     private final byte[] data;
     private final int len;
 
