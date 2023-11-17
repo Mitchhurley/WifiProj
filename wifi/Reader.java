@@ -12,41 +12,49 @@ import java.util.concurrent.ArrayBlockingQueue;
 public class Reader implements Runnable
 {
     private RF theRF;
-    private Transmission t;
+    private ArrayBlockingQueue<Frame> ackQueue;
+    private ArrayBlockingQueue<Frame> sendQueue;
     private PrintWriter output;
-    private ArrayBlockingQueue<Transmission> incomingQueue;
-    
-    public Reader(ArrayBlockingQueue<Transmission> incomingQueue,RF theRF, PrintWriter output){
+    private short ourMAC;
+    private Transmission t;
+
+    public Reader(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, PrintWriter output, short ourMAC, Transmission t){
         this.theRF = theRF;
+        this.sendQueue = sendQueue;
+        this.ackQueue = ackQueue;
+        this.ourMAC = ourMAC;
         this.output = output;
-        this.incomingQueue = incomingQueue;
+        this.t = t;
     }
-    
+
     @Override
     public void run(){
-        // Call receive and block until a transmission arrives
-        output.println("Listening for a transmission...");
-        byte[] receivedPacket = theRF.receive();
-        //TODO move above to linklayerclass?
-        // Extract dest and source adresses
-        short destAddr = (short) ((receivedPacket[2] & 0xFF) | ((receivedPacket[3] & 0xFF) << 8));
-        short sourceAddr = (short) ((receivedPacket[4] & 0xFF) | ((receivedPacket[5] & 0xFF) << 8));
-        // Determine the position where the data payload starts in the frame
-        int dataStartIndex = 6;
-        int checkSumLength = 4;
-        // Calculate the length of the data payload
-        int dataLength = receivedPacket.length - dataStartIndex - checkSumLength;
+        // run forever
+        while (true) {
+            // listen for transmission
+            byte[] incomingBytes = theRF.receive();
+            // create frame obj with it
+            Frame incomingFrame = new Frame(incomingBytes);
+            // validate it
+            if (incomingFrame.validateChecksum()) {
+                // Now check what type of message it is
+                if (incomingFrame.frameType == 0) { // it is data. send to the layer above and send ack
+                    //TODO validate seq num
 
-        // Extract the data payload into a separate byte array from start of data to checksum
-        byte[] data = new byte[dataLength];
-        System.arraycopy(receivedPacket, dataStartIndex, data, 0, dataLength);
+                } else if (incomingFrame.frameType == 1) { // it is an ACK, queue it for the writer thread to see
+
+                } else if (incomingFrame.frameType == 1) { // it is a beacon
+
+                } else if (incomingFrame.frameType == 1) {
+                    
+                } else if (incomingFrame.frameType == 1) {
+                    
+                }
+            }
+        }
+    }
+    
+    private void dataReceived(Frame incomingFrame) {
         
-        // Set t to appropriate vals
-        t.setBuf(data);
-        t.setDestAddr(destAddr);
-        t.setSourceAddr(sourceAddr);
-        
-        // exit
-        return;
     }
 }
