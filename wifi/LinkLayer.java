@@ -7,13 +7,15 @@ import rf.RF;
 /**
  * Use this layer as a starting point for your project code.  See {@link Dot11Interface} for more
  * details on these routines.
- * @author richards
+ * @authors Mitchell Hurley & Jonah Kelsie
+ * @version 1.3.1 11/17/23
  */
 public class LinkLayer implements Dot11Interface 
 {
     private RF theRF;           // You'll need one of these eventually
     private ArrayBlockingQueue<Frame> sendQueue;
     private ArrayBlockingQueue<Frame> ackQueue;
+    private ArrayBlockingQueue<Frame> incQueue;
     private short ourMAC;       // Our MAC address
     private PrintWriter output; // The output stream we'll write to
 
@@ -35,7 +37,7 @@ public class LinkLayer implements Dot11Interface
         this.output = output;
         // Initialize threads
         writer = new Writer(theRF, sendQueue, ackQueue, ourMAC, output);
-        reader = new Reader(theRF, sendQueue, ackQueue, ourMAC, output);
+        reader = new Reader(theRF, incQueue, ackQueue, ourMAC, output);
         // start threads
         Thread writerThread = new Thread(writer);
         Thread readerThread = new Thread(reader);
