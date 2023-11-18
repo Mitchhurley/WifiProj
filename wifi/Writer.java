@@ -6,8 +6,8 @@ import java.util.concurrent.ArrayBlockingQueue;
 /**
  * A thread that creates and sends an 802.11 frame with the specified data
  *
- * @author Jonah Kelsey
- * @version 1.0 11/6/23
+ * @author Jonah Kelsey & Mitchell Hurley
+ * @version 1.3.1 11/17/23
  */
 public class Writer implements Runnable
 {
@@ -32,9 +32,8 @@ public class Writer implements Runnable
     // Our current frame to be transmitted
     private Frame currentFrame;
     // Window properties
-    private int collisionWindow;
-    // Slot number
-    private int slotNum = 0;
+    private int contentionWindow;
+    private int slotCount;
 
     public Writer(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, short ourMAC, PrintWriter output){
         this.theRF = theRF;
@@ -46,8 +45,9 @@ public class Writer implements Runnable
         state = "Await data";
         retransmit = false;
         retries = 0;
-        currentFrame = null;
-        collisionWindow = theRF.aCWmin;
+        slotCount = 0;
+        Frame currentFrame = null;
+        contentionWindow = RF.aCWmin;
     }
 
     //TODO finish
@@ -67,7 +67,16 @@ public class Writer implements Runnable
                 {
                     ie.printStackTrace();
                 }
-
+                //If its an ACK, just wait a little and send
+                if(currentFrame.frameType == 1) {
+                	try {
+						Thread.sleep(SIFS);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+           
+                }
                 // if the RF is not in use move to idle wait
                 if (!theRF.inUse()) {
                     state = "Idle DIFS wait";
@@ -85,10 +94,13 @@ public class Writer implements Runnable
                     state = "Busy DIFS wait";
                 } else { // if not transmit and await ack
                     // TODO transmit
+                	
+                	//TODO do not go to await ack if its 
                     state = "Await ACK";
                 }
             } else if (state == "Busy DIFS wait") {
                 // wait for idle
+            	//TODO check if this a retransmisssion
                 while (theRF.inUse()) {
                     // wait till free
                 }
@@ -96,13 +108,12 @@ public class Writer implements Runnable
                 state = "Slot wait";
             } else if (state == "Slot wait") {
                 // wait for our number of slots
-                // TODO maybe not accurate? need to see if channel was idle while waiting?
-                for (int i = 0; i < slotNum; i++) {
-                    try {
-                        Thread.sleep(SLOT);
-                    }
-                    catch (InterruptedException ex) {}
-                }
+            	int backoffTime = (int) (Math.random() * contentionWindow * SLOT);
+            	try {
+            	    Thread.sleep(backoffTime);
+            	} catch (InterruptedException ex) {
+            	    
+            	}
                 // Check channel
                 if (theRF.inUse()) { // if busy 
                     state = "Busy DIFS wait";
@@ -122,7 +133,7 @@ public class Writer implements Runnable
                 // Check ack queue
                 if (ackQueue.peek() != null) {
                     // if we have an ack, remove from queue and reset
-                    collisionWindow = theRF.aCWmin;
+                    contentionWindow = RF.aCWmin;
                     retries = 0;
                     try
                     {
@@ -132,18 +143,20 @@ public class Writer implements Runnable
                     {
                         ie.printStackTrace();
                     }
+                    //TODO check ACK to confirm that our packet got through
                     state = "Await data";
                 } else {
-                    // check if we have reached rery limit
-                    if (retries >= theRF.dot11RetryLimit) {
+                    // check if we have reached retry limit
+                    if (retries >= RF.dot11RetryLimit) {
                         // if we have reached the limit, give up
                         retries = 0;
-                        // TODO cw?
+                        // TODO contention window?
                         state = "Await data";
                     }
                     retries++;
-                    
-                    // go to busy difs wait
+                    //Double collision window w/o exceeding max
+                    contentionWindow = Math.min(contentionWindow * 2, RF.aCWmax);
+                    //TODO set retransmission bit
                     state = "Busy DIFS wait";
                 }
             }
@@ -152,6 +165,14 @@ public class Writer implements Runnable
     }
 
     private int transmit(Frame outgoingFrame) {
-        return 0;
+    	// Convert the Frame to a byte array
+        byte[] data = outgoingFrame.toByteArray();
+
+        // Transmit the data using the RF instance
+        int bytesSent = theRF.transmit(data);
+
+        // Perform any additional actions based on the result, e.g., update statistics
+
+        return bytesSent;
     }
 }
