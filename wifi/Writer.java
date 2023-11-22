@@ -48,6 +48,7 @@ public class Writer implements Runnable
         slotCount = 0;
         Frame currentFrame = null;
         contentionWindow = RF.aCWmin;
+        //output.println("Writer: Writer constructor ran.");
     }
 
     //TODO finish
@@ -57,6 +58,7 @@ public class Writer implements Runnable
         while (true) {
             // Test what state we are in
             if (state == "Await data") {
+                output.println("Writer: Writer awaiting data.\n");
                 retries = 0;
                 // Block until there is a message on queue, and then take it and send
                 try
@@ -69,8 +71,11 @@ public class Writer implements Runnable
                 }
                 //If its an ACK, just wait a little and send
                 if(currentFrame.frameType == 1) {
+                	output.println("Writer: Writer found ACK, attempting to send.\n");
                 	try {
 						Thread.sleep(SIFS);
+						transmit(currentFrame);
+						output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
 					} catch (InterruptedException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
@@ -93,10 +98,16 @@ public class Writer implements Runnable
                 if (theRF.inUse()) { // if it was in use move to busy wait
                     state = "Busy DIFS wait";
                 } else { // if not transmit and await ack
-                    // TODO transmit
+                    //  transmit
                 	
-                	//TODO do not go to await ack if its 
-                    state = "Await ACK";
+					int sent = transmit(currentFrame);
+					output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
+                	// do not go to await ack if its to broadcast
+					if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
+						state = "Await data";
+					}else {
+						state = "Await ACK";
+					}
                 }
             } else if (state == "Busy DIFS wait") {
                 // wait for idle
@@ -118,7 +129,8 @@ public class Writer implements Runnable
                 if (theRF.inUse()) { // if busy 
                     state = "Busy DIFS wait";
                 } else { // if not transmit and await ack
-                    // TODO transmit
+                    transmit(currentFrame);
+                    output.println("Writer: Writer Done with slot wait and transmitting data.");
                     state = "Await ACK";
                 }
             } else if (state == "Await ACK") {
@@ -133,6 +145,7 @@ public class Writer implements Runnable
                 // Check ack queue
                 if (ackQueue.peek() != null) {
                     // if we have an ack, remove from queue and reset
+                	output.println("Writer: Writer Found ACK and validating.");
                     contentionWindow = RF.aCWmin;
                     retries = 0;
                     try
@@ -159,6 +172,23 @@ public class Writer implements Runnable
                     //TODO set retransmission bit
                     state = "Busy DIFS wait";
                 }
+            } else {
+            	//output.print("State Error: Current state is "+ state);
+            }
+            //Print statements for debugging
+            output.println("Writer: Current State: " + state);
+            output.println("Writer: Retransmit: " + retransmit);
+            output.println("Writer: Retries: " + retries);
+            output.println("Writer: Contentions Window: " + contentionWindow);
+            output.println("Writer: Slot Count: " + slotCount + "\n\n\n");
+            output.flush();
+            if (currentFrame != null) {
+                output.println("Writer: Current Frame - Frame Type: " + currentFrame.frameType +
+                        ", SeqNum: " + currentFrame.seqNum +
+                        ", DestAddr: " + currentFrame.destAddr +
+                        ", SrcAddr: " + currentFrame.srcAddr +
+                        ", Data Length: " + currentFrame.data.length);
+                output.flush();
             }
 
         }
@@ -167,7 +197,12 @@ public class Writer implements Runnable
     private int transmit(Frame outgoingFrame) {
     	// Convert the Frame to a byte array
         byte[] data = outgoingFrame.toByteArray();
-
+        
+        //output.println("Writer: Transmitting Frame - Frame Type: " + outgoingFrame.frameType +
+        //        ", SeqNum: " + outgoingFrame.seqNum +
+        //        ", DestAddr: " + outgoingFrame.destAddr +
+        //        ", SrcAddr: " + outgoingFrame.srcAddr +
+        //        ", Data Length: " + outgoingFrame.data.length);
         // Transmit the data using the RF instance
         int bytesSent = theRF.transmit(data);
 

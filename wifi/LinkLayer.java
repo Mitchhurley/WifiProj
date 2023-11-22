@@ -7,7 +7,7 @@ import rf.RF;
 /**
  * Use this layer as a starting point for your project code.  See {@link Dot11Interface} for more
  * details on these routines.
- * @authors Mitchell Hurley & Jonah Kelsie
+ * @authors Mitchell Hurley & Jonah Kelsey
  * @version 1.3.1 11/17/23
  */
 public class LinkLayer implements Dot11Interface 
@@ -15,7 +15,7 @@ public class LinkLayer implements Dot11Interface
     private RF theRF;           // You'll need one of these eventually
     private ArrayBlockingQueue<Frame> sendQueue;
     private ArrayBlockingQueue<Frame> ackQueue;
-    private ArrayBlockingQueue<Frame> incQueue;
+    private ArrayBlockingQueue<Transmission> incQueue;
     private short ourMAC;       // Our MAC address
     private PrintWriter output; // The output stream we'll write to
 
@@ -33,18 +33,19 @@ public class LinkLayer implements Dot11Interface
         theRF = new RF(null, null);
         sendQueue = new ArrayBlockingQueue<Frame>(10);
         ackQueue = new ArrayBlockingQueue<Frame>(10);
+        incQueue = new ArrayBlockingQueue<Transmission>(10);
         this.ourMAC = ourMAC;
         this.output = output;
         // Initialize threads
         writer = new Writer(theRF, sendQueue, ackQueue, ourMAC, output);
-        reader = new Reader(theRF, incQueue, ackQueue, ourMAC, output);
+        reader = new Reader(theRF, sendQueue, ackQueue, output, ourMAC, incQueue);
         // start threads
         Thread writerThread = new Thread(writer);
         Thread readerThread = new Thread(reader);
         writerThread.start();
         readerThread.start();
-        
-        output.println("LinkLayer: Constructor ran.");
+
+        //output.println("LinkLayer: Constructor ran.");
     }
 
     /**
@@ -52,9 +53,27 @@ public class LinkLayer implements Dot11Interface
      * of bytes to send.  See docs for full description.
      */
     public int send(short dest, byte[] data, int len) {
-        // Make a new writer object
+        // see how many frames we need
+        int numFrames = (data.length + 2037) / 2038; // Round up division
+        // Divide up data and add to send queue
+        for (short i = 0; i < numFrames; i++) {
+            // calculate the size of the current chunk
+            int chunkSize = Math.min(2038, data.length - i * 2038);
 
-        // Run it
+            // create new data for frame
+            byte[] dataChunk = new byte[chunkSize];
+            int dataStart = i * 2038;
+
+            // copy data into the chunk
+            System.arraycopy(data, dataStart, dataChunk, 0, chunkSize);
+
+            // Create new frame
+            Frame outgoingFrame = new Frame(0, i, dest, ourMAC, dataChunk);
+            output.println("LinkLayer: Offering data - Dest: " + dest + ", Length: " + len);
+            
+            // Add to outgoing queue
+            sendQueue.offer(outgoingFrame);
+        }
 
         return len;
     }
@@ -66,21 +85,25 @@ public class LinkLayer implements Dot11Interface
 
     public int recv(Transmission t) {
         // Create the Reader thread
-        Reader myReader = new Reader(theRF, output, t);
-
-        // Start the Reader thread
-        Thread readerThread = new Thread(myReader);
-        readerThread.start();
-
-        try {
-            // Wait for the Reader thread to finish
-            readerThread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
-        return t.getBuf().length;
-        // return 0;
+    	output.println("LinkLayer: Attempting to recieve data");
+        // Check If incQueue 
+    	while (true)
+	    	while (incQueue.peek() != null) {
+		    	try
+		    	{
+		            t = incQueue.take();
+		            output.println("LinkLayer: Found Val in Incoming Queue");
+		            //Figure out if its too big
+		            return t.getBuf().length;
+		        }
+		        catch (InterruptedException ie)
+		        {
+		            ie.printStackTrace();
+		            return -1;
+		        }
+		    	
+		    	//figure out max value
+	    	}
     }
 
     /**

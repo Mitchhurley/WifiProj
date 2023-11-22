@@ -1,4 +1,5 @@
 package wifi;
+import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 
 public class Frame
@@ -11,7 +12,7 @@ public class Frame
     public byte[] data;
     public int crc;
 
-    // TODO constructor 1
+    // Constructor 1
     public Frame(int frameType, short seqNum, short destAddr, short srcAddr, byte[] data) {
         // if data is empty create new data
         if (data == null) {
@@ -29,19 +30,18 @@ public class Frame
         this.srcAddr = srcAddr;
         this.data = data;
         this.crc = calculateChecksum(data);
-
     }
 
-    // constructor from byte array
+    // Constructor from byte array
     public Frame(byte[] fullFrame) {
-        //TODO check size
+        // TODO check size
 
         // Extracting bits for frameType
         frameType = (byte) ((fullFrame[0] >> 5) & 0x07);
         // Extracting the 4th bit for retry
         retry = ((fullFrame[0] >> 4) & 0x01) != 0;
         // Extracting 12 bits for seqnum (assuming seqnum is split between two bytes)
-        seqNum = ((data[0] & 0x0F) << 8) | (fullFrame[1] & 0xFF);
+        seqNum = ((fullFrame[0] & 0x0F) << 8) | (fullFrame[1] & 0xFF);
         // Get dest and source addresses
         destAddr = (short) ((fullFrame[2] & 0xFF) | ((fullFrame[3] & 0xFF) << 8));
         srcAddr = (short) ((fullFrame[4] & 0xFF) | ((fullFrame[5] & 0xFF) << 8));
@@ -56,42 +56,50 @@ public class Frame
         System.arraycopy(fullFrame, dataStartIndex, data, 0, dataLength);
 
         // Extract crc
-        System.arraycopy(fullFrame, dataStartIndex + dataLength, crc, 0, 4);
-
+        crc = ByteBuffer.wrap(fullFrame, dataStartIndex + dataLength, 4).getInt();
     }
 
-    //TODO finish
+    // Convert the frame to a byte array
     public byte[] toByteArray() {
         byte[] frame = new byte[data.length + 10]; // 10 bytes for MAC header
-        frame[0] = (byte) ((frameType & 0x07) << 5); // Set the first 3 bits of frame to frameType
-        // Set the next bit to retry (4th bit)
-        if (retry) {
-            frame[0] |= (byte) (1 << 4);
-        } else {
-            frame[0] &= (byte) ~(1 << 4);
-        }
-        frame[0] |= (byte) ((seqNum >> 8) & 0x0F); // Set the next 12 bits to seqNum
-        frame[1] = (byte) (seqNum & 0xFF);
-        frame[2] = (byte) destAddr; // Destination MAC address (lower byte)
-        frame[3] = (byte) (destAddr >> 8); // Destination MAC address (upper byte)
-        frame[4] = (byte) srcAddr; // Source MAC address (lower byte)
-        frame[5] = (byte) (srcAddr >> 8); // Source MAC address (upper byte)
+        frame[0] = (byte) ((frameType & 0x07) << 5); // Set the first 3 bits for frameType
+        frame[0] |= (byte) ((retry ? 1 : 0) << 4); // Set the 4th bit for retry
+        frame[0] |= (byte) ((seqNum >> 8) & 0x0F); // Set the upper 4 bits of seqNum
+        frame[1] = (byte) (seqNum & 0xFF); // Set the lower 8 bits of seqNum
+        frame[2] = (byte) (destAddr & 0xFF); // Set the lower 8 bits of destAddr
+        frame[3] = (byte) ((destAddr >> 8) & 0xFF); // Set the upper 8 bits of destAddr
+        frame[4] = (byte) (srcAddr & 0xFF); // Set the lower 8 bits of srcAddr
+        frame[5] = (byte) ((srcAddr >> 8) & 0xFF); // Set the upper 8 bits of srcAddr
 
-        // Copy the data into the frame
+        // Copy the data payload into the frame
         System.arraycopy(data, 0, frame, 6, data.length);
-        // Copy in checksum
-        System.arraycopy(crc, 0, frame, frame.length - 4, 4);
+
+        // Calculate and set CRC32
+        CRC32 crc32 = new CRC32();
+        crc32.update(frame, 0, data.length + 6);
+        int calculatedCRC = (int) crc32.getValue();
+        ByteBuffer.wrap(frame, data.length + 6, 4).putInt(calculatedCRC);
 
         return frame;
     }
-    
-    public boolean validateChecksum() {
-        return crc == calculateChecksum(data);
+
+    // Calculate CRC32 checksum for the data payload
+    private int calculateChecksum(byte[] data) {
+        CRC32 crc32 = new CRC32();
+        crc32.update(data);
+        return (int) crc32.getValue();
     }
     
-    private int calculateChecksum(byte[] data) {
-        CRC32 checker = new CRC32();
-        checker.update(data);
-        return (int) checker.getValue();
+    public boolean validateChecksum() {
+        CRC32 crc32 = new CRC32();
+
+        // Calculate CRC for the data payload
+        crc32.update(data);
+
+        // Get the calculated CRC value
+        long calculatedCrc = crc32.getValue();
+
+        // Compare with the stored CRC in the frame
+        return calculatedCrc == crc;
     }
 }
