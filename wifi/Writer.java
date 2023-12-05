@@ -24,7 +24,6 @@ public class Writer implements Runnable
     final int DIFS = 20000;
     final int defaultTimeout = 2000;
 
-
     // Represents the state of our sender thread
     private String state;
     // How many retries we have done on current transmission
@@ -32,8 +31,13 @@ public class Writer implements Runnable
     // Our current frame to be transmitted
     private Frame currentFrame;
     // Window properties
+    private volatile boolean useMaxCw = true;
     private int contentionWindow;
     private int slotCount;
+    // Beacon interval
+    private volatile int beaconInterval = 3000;
+    private long nextBeaconTime;
+    private final int beaconDelay = 0; //
 
     public Writer(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, short ourMAC, PrintWriter output){
         this.theRF = theRF;
@@ -60,27 +64,36 @@ public class Writer implements Runnable
             if (state == "Await data") {
                 output.println("Writer: Writer awaiting data.\n");
                 retries = 0;
-                // Block until there is a message on queue, and then take it and send
-                try
-                {
-                    currentFrame = sendQueue.take();
+                // check if we need to send a beacon frame
+                if (timeToSendBeacon()) {
+                    //if we do, send that
+                    currentFrame = buildBeacon();
+                } else {
+                    // if we don't, take frame from queue
+                    // Block until there is a message on queue, and then take it and send
+                    try
+                    {
+                        currentFrame = sendQueue.take();
+                    }
+                    catch (InterruptedException ie)
+                    {
+                        ie.printStackTrace();
+                    }
                 }
-                catch (InterruptedException ie)
-                {
-                    ie.printStackTrace();
-                }
+
                 //If its an ACK, just wait a little and send
+                // TODO: not sure what you had in mind here. because of the way this state machine works, it will send the ack and then send it again after difs wait. We dont want to ack our acks
                 if(currentFrame.frameType == 1) {
-                	output.println("Writer: Writer found ACK, attempting to send.\n");
-                	try {
-						Thread.sleep(SIFS);
-						transmit(currentFrame);
-						output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
-					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-           
+                    output.println("Writer: Writer found ACK, attempting to send.\n");
+                    try {
+                        Thread.sleep(SIFS);
+                        transmit(currentFrame);
+                        output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
+                    } catch (InterruptedException e) {
+                        // TODO Auto-generated catch block
+                        e.printStackTrace();
+                    }
+
                 }
                 // if the RF is not in use move to idle wait
                 if (!theRF.inUse()) {
@@ -99,19 +112,19 @@ public class Writer implements Runnable
                     state = "Busy DIFS wait";
                 } else { // if not transmit and await ack
                     //  transmit
-                	
-					int sent = transmit(currentFrame);
-					output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
-                	// do not go to await ack if its to broadcast
-					if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
-						state = "Await data";
-					}else {
-						state = "Await ACK";
-					}
+
+                    int sent = transmit(currentFrame);
+                    output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
+                    // do not go to await ack if its to broadcast
+                    if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
+                        state = "Await data";
+                    }else {
+                        state = "Await ACK";
+                    }
                 }
             } else if (state == "Busy DIFS wait") {
                 // wait for idle
-            	//TODO check if this a retransmisssion
+                //TODO check if this a retransmisssion
                 while (theRF.inUse()) {
                     // wait till free
                 }
@@ -119,12 +132,12 @@ public class Writer implements Runnable
                 state = "Slot wait";
             } else if (state == "Slot wait") {
                 // wait for our number of slots
-            	int backoffTime = (int) (Math.random() * contentionWindow * SLOT);
-            	try {
-            	    Thread.sleep(backoffTime);
-            	} catch (InterruptedException ex) {
-            	    
-            	}
+                int backoffTime = (int) (Math.random() * contentionWindow * SLOT);
+                try {
+                    Thread.sleep(backoffTime);
+                } catch (InterruptedException ex) {
+
+                }
                 // Check channel
                 if (theRF.inUse()) { // if busy 
                     state = "Busy DIFS wait";
@@ -145,7 +158,7 @@ public class Writer implements Runnable
                 // Check ack queue
                 if (ackQueue.peek() != null) {
                     // if we have an ack, remove from queue and reset
-                	output.println("Writer: Writer Found ACK and validating.");
+                    output.println("Writer: Writer Found ACK and validating.");
                     contentionWindow = RF.aCWmin;
                     retries = 0;
                     try
@@ -173,7 +186,7 @@ public class Writer implements Runnable
                     state = "Busy DIFS wait";
                 }
             } else {
-            	//output.print("State Error: Current state is "+ state);
+                //output.print("State Error: Current state is "+ state);
             }
             //Print statements for debugging
             output.println("Writer: Current State: " + state);
@@ -184,10 +197,10 @@ public class Writer implements Runnable
             output.flush();
             if (currentFrame != null) {
                 output.println("Writer: Current Frame - Frame Type: " + currentFrame.frameType +
-                        ", SeqNum: " + currentFrame.seqNum +
-                        ", DestAddr: " + currentFrame.destAddr +
-                        ", SrcAddr: " + currentFrame.srcAddr +
-                        ", Data Length: " + currentFrame.data.length);
+                    ", SeqNum: " + currentFrame.seqNum +
+                    ", DestAddr: " + currentFrame.destAddr +
+                    ", SrcAddr: " + currentFrame.srcAddr +
+                    ", Data Length: " + currentFrame.data.length);
                 output.flush();
             }
 
@@ -195,9 +208,9 @@ public class Writer implements Runnable
     }
 
     private int transmit(Frame outgoingFrame) {
-    	// Convert the Frame to a byte array
+        // Convert the Frame to a byte array
         byte[] data = outgoingFrame.toByteArray();
-        
+
         //output.println("Writer: Transmitting Frame - Frame Type: " + outgoingFrame.frameType +
         //        ", SeqNum: " + outgoingFrame.seqNum +
         //        ", DestAddr: " + outgoingFrame.destAddr +
@@ -209,5 +222,42 @@ public class Writer implements Runnable
         // Perform any additional actions based on the result, e.g., update statistics
 
         return bytesSent;
+    }
+
+    public void setUseMaxCw(boolean useMaxCw) {
+        this.useMaxCw = useMaxCw;
+    }
+
+    public boolean getUseMaxCw() {
+        return this.useMaxCw;
+    }
+    // sets the beacon interval
+    public void setBeaconInterval(int beaconInterval) {
+        this.beaconInterval = beaconInterval;
+    }
+    // gets the beacon interval
+    public int getBeaconInterval() {
+        return this.beaconInterval;
+    }
+
+    private boolean timeToSendBeacon() {
+        return theRF.clock() > nextBeaconTime;
+    }
+
+    private void resetBeacon() {
+        nextBeaconTime = theRF.clock() + beaconInterval;
+    }
+
+    // TODO: not sure how seq num factors in
+    private Frame buildBeacon() {
+        byte[] timeStamp = new byte[8];
+        long time = theRF.clock() + beaconDelay;
+
+        // Manually convert the 'time' long value to a byte array
+        for (int i = 0; i < 8; ++i) {
+            timeStamp[i] = (byte) (time >> (i * 8)); // Shift and extract each byte
+        }
+
+        return new Frame(2, (short) 0, (short) -1, ourMAC, timeStamp);
     }
 }
