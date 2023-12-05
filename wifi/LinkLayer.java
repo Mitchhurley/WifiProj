@@ -19,6 +19,10 @@ public class LinkLayer implements Dot11Interface
     private short ourMAC;       // Our MAC address
     private PrintWriter output; // The output stream we'll write to
 
+    // TODO: neither of these are fully working. I can finish them
+    private int status; // status code for our link layer
+    private int debug; // set to 0 if we want no debug output, 1 if we want all debug
+
     private Writer writer;
     private Reader reader;
 
@@ -53,29 +57,24 @@ public class LinkLayer implements Dot11Interface
      * of bytes to send.  See docs for full description.
      */
     public int send(short dest, byte[] data, int len) {
-        // see how many frames we need
-        int numFrames = (data.length + 2037) / 2038; // Round up division
-        // Divide up data and add to send queue
-        for (short i = 0; i < numFrames; i++) {
-            // calculate the size of the current chunk
-            int chunkSize = Math.min(2038, data.length - i * 2038);
-
-            // create new data for frame
-            byte[] dataChunk = new byte[chunkSize];
-            int dataStart = i * 2038;
-
-            // copy data into the chunk
-            System.arraycopy(data, dataStart, dataChunk, 0, chunkSize);
-
-            // Create new frame
-            Frame outgoingFrame = new Frame(0, i, dest, ourMAC, dataChunk);
-            output.println("LinkLayer: Offering data - Dest: " + dest + ", Length: " + len);
-            
-            // Add to outgoing queue
-            sendQueue.offer(outgoingFrame);
+        // check len of frame
+        if (len > 2038) {
+            // frame is too big
+            status = 9;
+            return 0;
         }
-
-        return len;
+        // check if sendqueue is full
+        if (sendQueue.size() >= 10) {
+            status = 10;
+            return 0;
+        }
+        // if all is well, try to queue frame
+        // TODO: seq numbers
+        Frame outgoingFrame = new Frame(0, (short) 0, dest, ourMAC, data);
+        sendQueue.offer(outgoingFrame);
+        
+        status = 1;
+        return 0;
     }
 
     /**
@@ -85,40 +84,80 @@ public class LinkLayer implements Dot11Interface
 
     public int recv(Transmission t) {
         // Create the Reader thread
-    	output.println("LinkLayer: Attempting to recieve data");
+        output.println("LinkLayer: Attempting to recieve data");
         // Check If incQueue 
-    	while (true)
-	    	while (incQueue.peek() != null) {
-		    	try
-		    	{
-		            t = incQueue.take();
-		            output.println("LinkLayer: Found Val in Incoming Queue");
-		            //Figure out if its too big
-		            return t.getBuf().length;
-		        }
-		        catch (InterruptedException ie)
-		        {
-		            ie.printStackTrace();
-		            return -1;
-		        }
-		    	
-		    	//figure out max value
-	    	}
+        while (true)
+            while (incQueue.peek() != null) {
+                try
+                {
+                    t = incQueue.take();
+                    output.println("LinkLayer: Found Val in Incoming Queue");
+                    // set status to good
+                    status = 1;
+                    //Figure out if its too big
+                    return t.getBuf().length;
+                }
+                catch (InterruptedException ie)
+                {
+                    ie.printStackTrace();
+                    // set status to 
+                    return -1;
+                }
+
+                //figure out max value
+            }
     }
 
     /**
      * Returns a current status code.  See docs for full description.
      */
     public int status() {
-        output.println("LinkLayer: Faking a status() return value of 0");
-        return 0;
+        return status;
     }
 
     /**
      * Passes command info to your link layer.  See docs for full description.
      */
     public int command(int cmd, int val) {
-        output.println("LinkLayer: Sending command "+cmd+" with value "+val);
-        return 0;
+        if (cmd == 0) {
+            output.println("-------------- Commands and Settings -----------------");
+            output.println("Cmd #0: Display command options and current settings");
+            output.println("Cmd #1: Set debug level.  Currently at " + this.debug + "\n        Use 1 for full debug output, 0 for no output");
+            output.println("Cmd #2: Set slot selection method.  Currently " + (writer.getUseMaxCw() ? "max" : "random") + "\n        Use 0 for random slot selection, any other value to use maxCW");
+            output.println("Cmd #3: Set beacon interval.  Currently at " + writer.getBeaconInterval() + " seconds" + "\n        Value specifies seconds between the start of beacons; -1 disables");
+            output.println("------------------------------------------------------");
+            return 0;
+        } else if (cmd == 1) {
+            if (val == 0 || val == 1) {
+                debug = val;
+                output.println("Setting debug to " + val);
+                return 0;
+            } else {
+                output.println("invalid argument for debug value, please use 1 for full debug output and 0 for no output");
+                return -1;
+            }
+        } else if (cmd == 2) {
+            if (val == 0) {
+                writer.setUseMaxCw(false);
+                output.println("Using a random Collision Window value");
+                return 0;
+            } else {
+                writer.setUseMaxCw(true);
+                output.println("Using the maximum Collision Window value");
+                return 0;
+            }
+        } else if (cmd == 3) {
+            if (val < 0) {
+                writer.setBeaconInterval(0);
+                output.println("Beacon frames will never be sent");
+                return 0;
+            } else {
+                writer.setBeaconInterval(val);
+                output.println("Beacon frames will be sent every " + val + " seconds");
+                return 0;
+            }
+        }
+        output.println("Command not recognized");
+        return -1;
     }
 }
