@@ -21,7 +21,7 @@ public class Reader implements Runnable
     private HashMap<Short, Integer> seqNumMap;
     private short ourMAC;
     public Reader(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, PrintWriter output, short ourMAC,
-    		ArrayBlockingQueue<Transmission> incQueue){
+    ArrayBlockingQueue<Transmission> incQueue){
         this.theRF = theRF;
         this.sendQueue = sendQueue;
         this.ackQueue = ackQueue;
@@ -38,42 +38,55 @@ public class Reader implements Runnable
         //output.println("Reader: Reader constructor ran.");
 
         while (true) {
-        	byte[] incomingBytes = theRF.receive();
+            byte[] incomingBytes = theRF.receive();
             // create frame obj with it
             Frame incomingFrame = new Frame(incomingBytes);
-//            Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-//            incQueue.offer(t);
+            //            Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+            //            incQueue.offer(t);
 
             // validate it
             output.println("Reader: Received Frame - Frame Type: " + incomingFrame.frameType +
-                    ", SeqNum: " + incomingFrame.seqNum +
-                    ", DestAddr: " + incomingFrame.destAddr +
-                    ", SrcAddr: " + incomingFrame.srcAddr +
-                    ", Data Length: " + incomingFrame.data.length);
+                ", SeqNum: " + incomingFrame.seqNum +
+                ", DestAddr: " + incomingFrame.destAddr +
+                ", SrcAddr: " + incomingFrame.srcAddr +
+                ", Data Length: " + incomingFrame.data.length);
             output.flush();
             if (true) { //incomingFrame.validateChecksum()
                 // Now check what type of message it is
-            	output.println("Reader: Received Frame,Checking Type");
+                output.println("Reader: Received Frame,Checking Type");
                 if (incomingFrame.frameType == 0) { // it is data. send to the layer above and send ack
-                	output.println("Reader: Received Frame of normal transmission");
-                	dataReceived(incomingFrame);
+                    output.println("Reader: Received Frame of normal transmission");
+                    dataReceived(incomingFrame);
                 } else if (incomingFrame.frameType == 1) { // it is an ACK, queue it for the writer thread to see
                     boolean addedACK = ackQueue.offer(incomingFrame);
                     int retries = 0;
-                	while (!addedACK) {
-                		try {
-							Thread.sleep(200);
-						} catch (InterruptedException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-                		if (retries++ > 10) {
-//                			output.print("CANNOT ADD ACK TO QUEUE");
-                		}
-                		addedACK = ackQueue.offer(incomingFrame);
-                	}
+                    while (!addedACK) {
+                        try {
+                            Thread.sleep(200);
+                        } catch (InterruptedException e) {
+                            // TODO Auto-generated catch block
+                            e.printStackTrace();
+                        }
+                        if (retries++ > 10) {
+                            //                            output.print("CANNOT ADD ACK TO QUEUE");
+                        }
+                        addedACK = ackQueue.offer(incomingFrame);
+                    }
                 } else if (incomingFrame.frameType == 3) { // it is a beacon
-                	//TODO do not send ack back
+                    //TODO do not send ack back
+                    output.println("Reader: Received Beacon Frame");
+                    byte[] timeStamp = incomingFrame.data;
+                    //TODO: check some stuff about the incoming frame, discard if it is corrupted or not 8 bytes
+                    if (timeStamp.length == 8) {
+                        long time = 0;
+                        // Reconstruct the long value from the byte array
+                        for (int i = 0; i < 8; ++i) {
+                            time |= ((long) (timeStamp[i] & 0xFF)) << (i * 8);
+                        }
+                        // TODO: set time from beacon
+                    } else {
+                        // Handle the case where the byte array doesn't contain enough bytes for a long
+                    }
 
                 } else if (incomingFrame.frameType == 1) {
 
@@ -81,9 +94,9 @@ public class Reader implements Runnable
 
                 }
             }  
-//            else {
-//                output.print("Failed Checksum");
-//            }
+            //            else {
+            //                output.print("Failed Checksum");
+            //            }
             output.println("Reader: Got to end ,Going back");
         }
     }
@@ -95,46 +108,46 @@ public class Reader implements Runnable
         // Check if the destination MAC address matches our MAC address
         if (incomingFrame.destAddr == ourMAC) {
             // Send data to the layer above
-        	//TODO maybe implement a removal from the dict if the size of transmission is less than max?
+            //TODO maybe implement a removal from the dict if the size of transmission is less than max?
             //See if we've received a transmission from somewhere before
-        	output.print("Reader:Correct Mac");
-        	if (seqNumMap.containsKey(incomingFrame.srcAddr)) {
-        		if (incomingFrame.seqNum == seqNumMap.get(incomingFrame.srcAddr)) {
-        			Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-    	        	incQueue.offer(t);
-    	            // Send ACK back
-    	            sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
-    	            //update expected seq num
-    	        	seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
-        		}else {
-        			output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
-        					+ "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
-        			Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-        			incQueue.offer(t);
-    	            sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
-        		}
-        	}else {
-        		//TODO maybe make sure seq num is 0
-        		//TODO figure out how to deal with larger size packets
-        		if  (incomingFrame.seqNum == 0) {
-		        	Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-		        	incQueue.offer(t);
-		            // Send ACK back
-		            sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
-		            seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
-        		}else {
-        			output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
-        					+ "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
-        			Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-        			incQueue.offer(t);
-    	            sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
-        		}
-        		}
-        //Broadcast address
+            output.print("Reader:Correct Mac");
+            if (seqNumMap.containsKey(incomingFrame.srcAddr)) {
+                if (incomingFrame.seqNum == seqNumMap.get(incomingFrame.srcAddr)) {
+                    Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+                    incQueue.offer(t);
+                    // Send ACK back
+                    sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
+                    //update expected seq num
+                    seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
+                }else {
+                    output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
+                        + "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
+                    Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+                    incQueue.offer(t);
+                    sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
+                }
+            }else {
+                //TODO maybe make sure seq num is 0
+                //TODO figure out how to deal with larger size packets
+                if  (incomingFrame.seqNum == 0) {
+                    Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+                    incQueue.offer(t);
+                    // Send ACK back
+                    sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
+                    seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
+                }else {
+                    output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
+                        + "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
+                    Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+                    incQueue.offer(t);
+                    sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
+                }
+            }
+            //Broadcast address
         } else if (incomingFrame.destAddr == 65535 || incomingFrame.destAddr == -1){
-        	Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
-        	//output.print("Broadcast Address Transmission Recieved");
-        	incQueue.offer(t);
+            Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
+            //output.print("Broadcast Address Transmission Recieved");
+            incQueue.offer(t);
         }
         // If its here the destination MAC address doesn't match ours or broadcast
 
