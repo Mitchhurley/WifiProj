@@ -1,7 +1,9 @@
 package wifi;
 import java.io.PrintWriter;
+
 import java.util.HashMap;
 import java.util.concurrent.ArrayBlockingQueue;
+
 
 import rf.RF;
 
@@ -144,7 +146,7 @@ public class Reader implements Runnable
                 }
             }
             //Broadcast address
-        } else if (incomingFrame.destAddr == 65535 || incomingFrame.destAddr == -1){
+        } else if (incomingFrame.destAddr == -1){
             Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
             //output.print("Broadcast Address Transmission Recieved");
             incQueue.offer(t);

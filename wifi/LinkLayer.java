@@ -1,6 +1,8 @@
 package wifi;
 import java.io.PrintWriter;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.Dictionary;
+import java.util.Hashtable;
 
 import rf.RF;
 
@@ -16,8 +18,9 @@ public class LinkLayer implements Dot11Interface
     private ArrayBlockingQueue<Frame> sendQueue;
     private ArrayBlockingQueue<Frame> ackQueue;
     private ArrayBlockingQueue<Transmission> incQueue;
-    private short ourMAC;       // Our MAC address
+    private short ourMAC;       // Our MAC addrescs
     private PrintWriter output; // The output stream we'll write to
+    private Dictionary<Short, Short> sequenceDict;
 
     // TODO: neither of these are fully working. I can finish them
     private int status; // status code for our link layer
@@ -38,6 +41,7 @@ public class LinkLayer implements Dot11Interface
         sendQueue = new ArrayBlockingQueue<Frame>(10);
         ackQueue = new ArrayBlockingQueue<Frame>(10);
         incQueue = new ArrayBlockingQueue<Transmission>(10);
+        sequenceDict = new Hashtable<Short,Short>();
         this.ourMAC = ourMAC;
         this.output = output;
         // Initialize threads
@@ -68,9 +72,18 @@ public class LinkLayer implements Dot11Interface
             status = 10;
             return 0;
         }
-        // if all is well, try to queue frame
-        // TODO: seq numbers
-        Frame outgoingFrame = new Frame(0, (short) 0, dest, ourMAC, data);
+        short seq = 0;
+        //Checking sequence numbers
+        if (sequenceDict.get(dest) != null) {
+        	
+        	seq = sequenceDict.get(dest);
+        	sequenceDict.put(dest, (short)(seq + 1));
+        }else {
+        	// if the dest hasn't been transmitted to yet, then we add a hashmap entry for the next time it is called
+        	sequenceDict.put(dest, (short)1);
+        }
+        
+        Frame outgoingFrame = new Frame(0, seq, dest, ourMAC, data);
         sendQueue.offer(outgoingFrame);
         
         status = 1;

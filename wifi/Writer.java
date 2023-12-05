@@ -65,9 +65,9 @@ public class Writer implements Runnable
                 output.println("Writer: Writer awaiting data.\n");
                 retries = 0;
                 // check if we need to send a beacon frame
-                if (timeToSendBeacon()) {
+                if (!timeToSendBeacon()) {
                     //if we do, send that
-                    currentFrame = buildBeacon();
+                	currentFrame = buildBeacon();
                 } else {
                     // if we don't, take frame from queue
                     // Block until there is a message on queue, and then take it and send
@@ -83,18 +83,7 @@ public class Writer implements Runnable
 
                 //If its an ACK, just wait a little and send
                 // TODO: not sure what you had in mind here. because of the way this state machine works, it will send the ack and then send it again after difs wait. We dont want to ack our acks
-                if(currentFrame.frameType == 1) {
-                    output.println("Writer: Writer found ACK, attempting to send.\n");
-                    try {
-                        Thread.sleep(SIFS);
-                        transmit(currentFrame);
-                        output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
-                    } catch (InterruptedException e) {
-                        // TODO Auto-generated catch block
-                        e.printStackTrace();
-                    }
-
-                }
+                
                 // if the RF is not in use move to idle wait
                 if (!theRF.inUse()) {
                     state = "Idle DIFS wait";
@@ -102,26 +91,40 @@ public class Writer implements Runnable
                     state = "Busy DIFS wait";
                 }
             } else if (state == "Idle DIFS wait") {
-                // We do our wait
-                try {
-                    Thread.sleep(DIFS);
-                }
-                catch (InterruptedException ex) {}
-                // Check if the channel is idle
-                if (theRF.inUse()) { // if it was in use move to busy wait
-                    state = "Busy DIFS wait";
-                } else { // if not transmit and await ack
-                    //  transmit
-
-                    int sent = transmit(currentFrame);
-                    output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
-                    // do not go to await ack if its to broadcast
-                    if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
+            	if(currentFrame.frameType == 1) {
+            		output.println("Writer: Writer found ACK, attempting to send.\n");
+                    try {
+                        Thread.sleep(SIFS);
+                        transmit(currentFrame);
+                        output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
                         state = "Await data";
-                    }else {
-                        state = "Await ACK";
+                    } catch (InterruptedException e) {
+                        // TODO Auto-generated catch block
+                        e.printStackTrace();
                     }
-                }
+
+	                }else {
+	                // We do our wait
+	                try {
+	                    Thread.sleep(DIFS);
+	                }
+	                catch (InterruptedException ex) {}
+	                // Check if the channel is idle
+	                if (theRF.inUse()) { // if it was in use move to busy wait
+	                    state = "Busy DIFS wait";
+	                } else { // if not transmit and await ack
+	                    //  transmit
+	
+	                    int sent = transmit(currentFrame);
+	                    output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
+	                    // do not go to await ack if its to broadcast
+	                    if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
+	                        state = "Await data";
+	                    }else {
+	                        state = "Await ACK";
+	                    }
+	                }
+	            }
             } else if (state == "Busy DIFS wait") {
                 // wait for idle
                 //TODO check if this a retransmisssion
