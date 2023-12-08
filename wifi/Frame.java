@@ -29,7 +29,7 @@ public class Frame
         this.destAddr = destAddr;
         this.srcAddr = srcAddr;
         this.data = data;
-        this.crc = calculateChecksum(data);
+        this.crc = calculateChecksum();
     }
 
     // Constructor from byte array
@@ -74,32 +74,37 @@ public class Frame
         // Copy the data payload into the frame
         System.arraycopy(data, 0, frame, 6, data.length);
 
-        // Calculate and set CRC32
-        CRC32 crc32 = new CRC32();
-        crc32.update(frame, 0, data.length + 6);
-        int calculatedCRC = (int) crc32.getValue();
-        ByteBuffer.wrap(frame, data.length + 6, 4).putInt(calculatedCRC);
+        // Copy the existing CRC into the frame at the appropriate position
+        ByteBuffer.wrap(frame, data.length + 6, 4).putInt(crc);
 
         return frame;
     }
 
-    // Calculate CRC32 checksum for the data payload
-    private int calculateChecksum(byte[] data) {
-        CRC32 crc32 = new CRC32();
-        crc32.update(data);
-        return (int) crc32.getValue();
-    }
-    
-    public boolean validateChecksum() {
+    public int calculateChecksum() {
         CRC32 crc32 = new CRC32();
 
-        // Calculate CRC for the data payload
-        crc32.update(data);
+        // Prepare a byte array containing the entire frame
+        byte[] frameWithHeader = new byte[data.length + 6]; // MAC header is 10 bytes
+        frameWithHeader[0] = (byte) ((frameType & 0x07) << 5);
+        frameWithHeader[0] |= (byte) ((retry ? 1 : 0) << 4);
+        frameWithHeader[0] |= (byte) ((seqNum >> 8) & 0x0F);
+        frameWithHeader[1] = (byte) (seqNum & 0xFF);
+        frameWithHeader[2] = (byte) (destAddr & 0xFF);
+        frameWithHeader[3] = (byte) ((destAddr >> 8) & 0xFF);
+        frameWithHeader[4] = (byte) (srcAddr & 0xFF);
+        frameWithHeader[5] = (byte) ((srcAddr >> 8) & 0xFF);
+
+        // Copy the data payload into the frame
+        System.arraycopy(data, 0, frameWithHeader, 6, data.length);
+
+        // Calculate CRC for the entire frame
+        crc32.update(frameWithHeader);
 
         // Get the calculated CRC value
-        long calculatedCrc = crc32.getValue();
+        return (int) crc32.getValue();
+    }
 
-        // Compare with the stored CRC in the frame
-        return calculatedCrc == crc;
+    public boolean validateChecksum() {
+        return calculateChecksum() == crc;
     }
 }
