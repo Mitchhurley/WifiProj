@@ -4,9 +4,7 @@ import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 
-
 import rf.RF;
-
 /**
  * Uses the simulated RF layer to listen for messages and store them in the transmission
  *
@@ -22,8 +20,14 @@ public class Reader implements Runnable
     private PrintWriter output;
     private HashMap<Short, Integer> seqNumMap;
     private short ourMAC;
+    // Debug output toggle
+    private volatile boolean outputDebug = true;
+    // For beacon frames
+    private final long processingTime = 0;
+    private ClockOffsetManager offsetManager;
+    
     public Reader(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, PrintWriter output, short ourMAC,
-    ArrayBlockingQueue<Transmission> incQueue){
+    ArrayBlockingQueue<Transmission> incQueue, ClockOffsetManager offsetManager){
         this.theRF = theRF;
         this.sendQueue = sendQueue;
         this.ackQueue = ackQueue;
@@ -31,6 +35,7 @@ public class Reader implements Runnable
         this.ourMAC = ourMAC;
         this.output = output;
         this.seqNumMap = new HashMap<Short, Integer>();
+        this.offsetManager = offsetManager;
         //output.println("Reader: Reader constructor ran.");
     }
 
@@ -40,6 +45,7 @@ public class Reader implements Runnable
         //output.println("Reader: Reader constructor ran.");
 
         while (true) {
+            printDebug("listening...");
             byte[] incomingBytes = theRF.receive();
             // create frame obj with it
             Frame incomingFrame = new Frame(incomingBytes);
@@ -47,7 +53,7 @@ public class Reader implements Runnable
             //            incQueue.offer(t);
 
             // validate it
-            output.println("Reader: Received Frame - Frame Type: " + incomingFrame.frameType +
+            printDebug("Reader: Received Frame - Frame Type: " + incomingFrame.frameType +
                 ", SeqNum: " + incomingFrame.seqNum +
                 ", DestAddr: " + incomingFrame.destAddr +
                 ", SrcAddr: " + incomingFrame.srcAddr +
@@ -55,9 +61,9 @@ public class Reader implements Runnable
             output.flush();
             if (true) { //incomingFrame.validateChecksum()
                 // Now check what type of message it is
-                output.println("Reader: Received Frame,Checking Type");
+                printDebug("Reader: Received Frame,Checking Type");
                 if (incomingFrame.frameType == 0) { // it is data. send to the layer above and send ack
-                    output.println("Reader: Received Frame of normal transmission");
+                    printDebug("Reader: Received Frame of normal transmission");
                     dataReceived(incomingFrame);
                 } else if (incomingFrame.frameType == 1) { // it is an ACK, queue it for the writer thread to see
                     boolean addedACK = ackQueue.offer(incomingFrame);
@@ -74,20 +80,22 @@ public class Reader implements Runnable
                         }
                         addedACK = ackQueue.offer(incomingFrame);
                     }
-                } else if (incomingFrame.frameType == 3) { // it is a beacon
+                } else if (incomingFrame.frameType == 2) { // it is a beacon
                     //TODO do not send ack back
-                    output.println("Reader: Received Beacon Frame");
+                    printDebug("Received Beacon Frame");
                     byte[] timeStamp = incomingFrame.data;
                     //TODO: check some stuff about the incoming frame, discard if it is corrupted or not 8 bytes
                     if (timeStamp.length == 8) {
-                        long time = 0;
-                        // Reconstruct the long value from the byte array
-                        for (int i = 0; i < 8; ++i) {
-                            time |= ((long) (timeStamp[i] & 0xFF)) << (i * 8);
+                        long receivedTime = bytesToLong(timeStamp);
+                        long adjustedTime = receivedTime + processingTime;
+                        if (adjustedTime > getCurrentTime()) {
+                            printDebug("beacon frame is ahead, adjusting time by " + (adjustedTime - getCurrentTime()));
+                            offsetManager.adjustClockOffset(adjustedTime - getCurrentTime());
+                        } else {
+                            printDebug("Beacon frame was not ahead");
                         }
-                        // TODO: set time from beacon
                     } else {
-                        // Handle the case where the byte array doesn't contain enough bytes for a long
+                        printDebug("Beacon frame was invalid");
                     }
 
                 } else if (incomingFrame.frameType == 1) {
@@ -99,20 +107,20 @@ public class Reader implements Runnable
             //            else {
             //                output.print("Failed Checksum");
             //            }
-            output.println("Reader: Got to end ,Going back");
+            printDebug("Reader: Got to end ,Going back");
         }
     }
 
     private void dataReceived(Frame incomingFrame) {
         // Validate sequence number
         // TODO: Implement sequence number validation
-        output.print("Reader:Data Recieved");
+        printDebug("Reader:Data Recieved");
         // Check if the destination MAC address matches our MAC address
         if (incomingFrame.destAddr == ourMAC) {
             // Send data to the layer above
             //TODO maybe implement a removal from the dict if the size of transmission is less than max?
             //See if we've received a transmission from somewhere before
-            output.print("Reader:Correct Mac");
+            printDebug("Reader:Correct Mac");
             if (seqNumMap.containsKey(incomingFrame.srcAddr)) {
                 if (incomingFrame.seqNum == seqNumMap.get(incomingFrame.srcAddr)) {
                     Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
@@ -122,7 +130,7 @@ public class Reader implements Runnable
                     //update expected seq num
                     seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
                 }else {
-                    output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
+                    printDebug("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
                         + "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
                     Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
                     incQueue.offer(t);
@@ -138,7 +146,7 @@ public class Reader implements Runnable
                     sendQueue.offer(createAckFrame(incomingFrame.seqNum, incomingFrame.srcAddr));
                     seqNumMap.put(incomingFrame.srcAddr, incomingFrame.seqNum + 1);
                 }else {
-                    output.print("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
+                    printDebug("Gap detected in Sequence Numbers from Address " + incomingFrame.srcAddr
                         + "\tExpected " + seqNumMap.get(incomingFrame.srcAddr) + " and got "+incomingFrame.seqNum);
                     Transmission t = new Transmission(incomingFrame.srcAddr,incomingFrame.destAddr, incomingFrame.data);
                     incQueue.offer(t);
@@ -158,5 +166,32 @@ public class Reader implements Runnable
     private Frame createAckFrame(int seqNum, short destAddr) {
         // Create an ACK frame with the specified sequence number and destination address
         return new Frame(1, (short) seqNum, destAddr, ourMAC, new byte[0]);
+    }
+
+    private long bytesToLong(byte[] bytes) {
+        long value = 0;
+        for (int i = 0; i < 8; ++i) {
+            value |= ((long) (bytes[i] & 0xFF)) << (i * 8);
+        }
+        return value;
+    }
+    
+    private long getCurrentTime() {
+        return theRF.clock() + offsetManager.getClockOffset();
+    }
+
+    private void printDebug(String message) {
+        if (outputDebug) {
+            output.println("Reader: " + message);
+            output.flush();
+        }
+    }
+
+    public void setDebug(boolean outputDebug) {
+        this.outputDebug = outputDebug;
+    }
+
+    public boolean getDebug() {
+        return this.outputDebug;
     }
 }
