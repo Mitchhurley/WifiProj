@@ -21,7 +21,7 @@ public class Writer implements Runnable
     final int SIFS = 100;
     final int SLOT = 200;
     boolean retransmit;
-    final int DIFS = 20000;
+    final int DIFS = 2000;
     final int defaultTimeout = 2000;
 
     // Represents the state of our sender thread
@@ -35,16 +35,21 @@ public class Writer implements Runnable
     private int contentionWindow;
     private int slotCount;
     // Beacon interval
-    private volatile int beaconInterval = 3000;
+    private volatile int beaconInterval = 20000;
     private long nextBeaconTime;
-    private final int beaconDelay = 0; //
+    private final int beaconDelay = 0;
+    // Debug output toggle
+    private volatile boolean outputDebug = true;
+    // clock offset
+    private ClockOffsetManager offsetManager;
 
-    public Writer(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, short ourMAC, PrintWriter output){
+    public Writer(RF theRF, ArrayBlockingQueue<Frame> sendQueue, ArrayBlockingQueue<Frame> ackQueue, short ourMAC, PrintWriter output, ClockOffsetManager offsetManager){
         this.theRF = theRF;
         this.sendQueue = sendQueue;
         this.ackQueue = ackQueue;
         this.ourMAC = ourMAC;
         this.output = output;
+        this.offsetManager = offsetManager;
 
         state = "Await data";
         retransmit = false;
@@ -52,6 +57,9 @@ public class Writer implements Runnable
         slotCount = 0;
         Frame currentFrame = null;
         contentionWindow = RF.aCWmin;
+
+        //initial reset of beacon
+        resetBeacon();
         //output.println("Writer: Writer constructor ran.");
     }
 
@@ -62,69 +70,83 @@ public class Writer implements Runnable
         while (true) {
             // Test what state we are in
             if (state == "Await data") {
-                output.println("Writer: Writer awaiting data.\n");
+                printDebug("awaiting data.\n");
+                printDebug("Time: " + theRF.clock());
                 retries = 0;
-                // check if we need to send a beacon frame
-                if (!timeToSendBeacon()) {
-                    //if we do, send that
-                	currentFrame = buildBeacon();
-                } else {
-                    // if we don't, take frame from queue
-                    // Block until there is a message on queue, and then take it and send
-                    try
-                    {
-                        currentFrame = sendQueue.take();
+                // TODO: not sure if this is safe
+                currentFrame = null;
+                // our idle state, this while loop ensures we wait until it is time to send a beacon or we have recieved data
+                while (currentFrame == null) {
+                    if (timeToSendBeacon()) {
+                        //if we do, send that
+                        currentFrame = buildBeacon();
+                        resetBeacon();
+                        printDebug("Time to send beacon frame!");
+                    } else if (sendQueue.peek() != null) {
+                        printDebug("Time to send data frame!");
+                        // if we don't, take frame from queue
+                        // Block until there is a message on queue, and then take it and send
+                        try
+                        {
+                            currentFrame = sendQueue.take();
+                        }
+                        catch (InterruptedException ie)
+                        {
+                            ie.printStackTrace();
+                        }
                     }
-                    catch (InterruptedException ie)
-                    {
-                        ie.printStackTrace();
-                    }
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException ex) {}
                 }
 
                 //If its an ACK, just wait a little and send
-                // TODO: not sure what you had in mind here. because of the way this state machine works, it will send the ack and then send it again after difs wait. We dont want to ack our acks
-                
+
                 // if the RF is not in use move to idle wait
                 if (!theRF.inUse()) {
+                    printDebug("channel free, moving to idle DIFS wait");
                     state = "Idle DIFS wait";
                 } else { // if the RF is in use move to busy wait
+                    printDebug("channel busy, moving to busy DIFS wait");
                     state = "Busy DIFS wait";
                 }
             } else if (state == "Idle DIFS wait") {
-            	if(currentFrame.frameType == 1) {
-            		output.println("Writer: Writer found ACK, attempting to send.\n");
+                if(currentFrame.frameType == 1) {
+                    printDebug("Writer found ACK, attempting to send.\n");
                     try {
                         Thread.sleep(SIFS);
                         transmit(currentFrame);
-                        output.println("Writer: Writer sending ACK,Dest is " + currentFrame.destAddr);
-                        state = "Await data";
+                        printDebug("Writer sending ACK,Dest is " + currentFrame.destAddr);
+                        state = "Await ACK";
                     } catch (InterruptedException e) {
                         // TODO Auto-generated catch block
                         e.printStackTrace();
                     }
 
-	                }else {
-	                // We do our wait
-	                try {
-	                    Thread.sleep(DIFS);
-	                }
-	                catch (InterruptedException ex) {}
-	                // Check if the channel is idle
-	                if (theRF.inUse()) { // if it was in use move to busy wait
-	                    state = "Busy DIFS wait";
-	                } else { // if not transmit and await ack
-	                    //  transmit
-	
-	                    int sent = transmit(currentFrame);
-	                    output.println("Writer: Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
-	                    // do not go to await ack if its to broadcast
-	                    if (currentFrame.destAddr == 65535 || currentFrame.destAddr == -1) {
-	                        state = "Await data";
-	                    }else {
-	                        state = "Await ACK";
-	                    }
-	                }
-	            }
+                }else {
+                    // We do our wait
+                    try {
+                        Thread.sleep(DIFS);
+                    }
+                    catch (InterruptedException ex) {}
+                    // Check if the channel is idle
+                    if (theRF.inUse()) { // if it was in use move to busy wait
+                        state = "Busy DIFS wait";
+                    } else { // if not transmit and await ack
+                        //  transmit
+
+                        int sent = transmit(currentFrame);
+                        printDebug("Writer Done with wait and transmitting data, sent "+ sent+" bytes\n");
+                        // do not go to await ack if its to broadcast
+                        if (currentFrame.destAddr == -1) {
+                            printDebug("general broadcast, skipping ack");
+                            state = "Await data";
+                        }else {
+                            printDebug("Sent, waiting for ack");
+                            state = "Await ACK";
+                        }
+                    }
+                }
             } else if (state == "Busy DIFS wait") {
                 // wait for idle
                 //TODO check if this a retransmisssion
@@ -146,65 +168,70 @@ public class Writer implements Runnable
                     state = "Busy DIFS wait";
                 } else { // if not transmit and await ack
                     transmit(currentFrame);
-                    output.println("Writer: Writer Done with slot wait and transmitting data.");
+                    printDebug("Writer Done with slot wait and transmitting data.");
                     state = "Await ACK";
                 }
             } else if (state == "Await ACK") {
-                // wait for timeout or ack arrival
-                int timeout = defaultTimeout;
-                while (ackQueue.peek() == null && timeout > 0) {
-                    try {
-                        Thread.sleep(20L);
+                // first check if we even need to wait
+                if (currentFrame.frameType != 1 && currentFrame.frameType != 2) {
+                    // wait for timeout or ack arrival
+                    int timeout = defaultTimeout;
+                    while (ackQueue.peek() == null && timeout > 0) {
+                        try {
+                            Thread.sleep(20L);
+                            timeout-= 20;
+                        }
+                        catch (InterruptedException ex) {}
                     }
-                    catch (InterruptedException ex) {}
-                }
-                // Check ack queue
-                if (ackQueue.peek() != null) {
-                    // if we have an ack, remove from queue and reset
-                    output.println("Writer: Writer Found ACK and validating.");
-                    contentionWindow = RF.aCWmin;
-                    retries = 0;
-                    try
-                    {
-                        ackQueue.take();
-                    }
-                    catch (InterruptedException ie)
-                    {
-                        ie.printStackTrace();
-                    }
-                    //TODO check ACK to confirm that our packet got through
-                    state = "Await data";
-                } else {
-                    // check if we have reached retry limit
-                    if (retries >= RF.dot11RetryLimit) {
-                        // if we have reached the limit, give up
+                    // Check ack queue
+                    if (ackQueue.peek() != null) {
+                        // if we have an ack, remove from queue and reset
+                        printDebug("Writer Found ACK and validating.");
+                        contentionWindow = RF.aCWmin;
                         retries = 0;
-                        // TODO contention window?
+                        try
+                        {
+                            ackQueue.take();
+                        }
+                        catch (InterruptedException ie)
+                        {
+                            ie.printStackTrace();
+                        }
+                        //TODO check ACK to confirm that our packet got through
                         state = "Await data";
+                    } else {
+                        // check if we have reached retry limit
+                        if (retries >= RF.dot11RetryLimit) {
+                            printDebug("Retry limit reached, packet has been abandoned");
+                            // if we have reached the limit, give up
+                            retries = 0;
+                            // TODO contention window?
+                            state = "Await data";
+                        } else {
+                            printDebug("No ACK found, attempting retry " + retries);
+                            retries++;
+                            currentFrame.retry = true;
+                            //Double collision window w/o exceeding max
+                            contentionWindow = Math.min(contentionWindow * 2, RF.aCWmax);
+                            state = "Busy DIFS wait";
+                        }
                     }
-                    retries++;
-                    //Double collision window w/o exceeding max
-                    contentionWindow = Math.min(contentionWindow * 2, RF.aCWmax);
-                    //TODO set retransmission bit
-                    state = "Busy DIFS wait";
                 }
             } else {
                 //output.print("State Error: Current state is "+ state);
             }
             //Print statements for debugging
-            output.println("Writer: Current State: " + state);
-            output.println("Writer: Retransmit: " + retransmit);
-            output.println("Writer: Retries: " + retries);
-            output.println("Writer: Contentions Window: " + contentionWindow);
-            output.println("Writer: Slot Count: " + slotCount + "\n\n\n");
-            output.flush();
+            //printDebug("Current State: " + state);
+            //printDebug("Retransmit: " + retransmit);
+            //printDebug("Retries: " + retries);
+            //printDebug("Contentions Window: " + contentionWindow);
+            //printDebug("Slot Count: " + slotCount + "\n");
             if (currentFrame != null) {
-                output.println("Writer: Current Frame - Frame Type: " + currentFrame.frameType +
-                    ", SeqNum: " + currentFrame.seqNum +
-                    ", DestAddr: " + currentFrame.destAddr +
-                    ", SrcAddr: " + currentFrame.srcAddr +
-                    ", Data Length: " + currentFrame.data.length);
-                output.flush();
+                //printDebug("Current Frame - Frame Type: " + currentFrame.frameType +
+                //    ", SeqNum: " + currentFrame.seqNum +
+                //    ", DestAddr: " + currentFrame.destAddr +
+                //    ", SrcAddr: " + currentFrame.srcAddr +
+                //    ", Data Length: " + currentFrame.data.length);
             }
 
         }
@@ -223,6 +250,7 @@ public class Writer implements Runnable
         int bytesSent = theRF.transmit(data);
 
         // Perform any additional actions based on the result, e.g., update statistics
+        printDebug("frame sent");
 
         return bytesSent;
     }
@@ -262,5 +290,20 @@ public class Writer implements Runnable
         }
 
         return new Frame(2, (short) 0, (short) -1, ourMAC, timeStamp);
+    }
+
+    private void printDebug(String message) {
+        if (outputDebug) {
+            output.println("Writer: " + message);
+            output.flush();
+        }
+    }
+
+    public void setDebug(boolean outputDebug) {
+        this.outputDebug = outputDebug;
+    }
+
+    public boolean getDebug() {
+        return this.outputDebug;
     }
 }
