@@ -1,0 +1,17 @@
+package wifi;
+
+public class ClockOffsetManager {
+    private volatile long clockOffset = 0;
+
+    public synchronized long getClockOffset() {
+        return clockOffset;
+    }
+
+    public synchronized void setClockOffset(long offset) {
+        clockOffset = offset;
+    }
+
+    public synchronized void adjustClockOffset(long adjustment) {
+        clockOffset += adjustment;
+    }
+}
