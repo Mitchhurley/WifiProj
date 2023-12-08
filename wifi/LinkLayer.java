@@ -24,7 +24,9 @@ public class LinkLayer implements Dot11Interface
 
     // TODO: neither of these are fully working. I can finish them
     private int status; // status code for our link layer
-    private int debug; // set to 0 if we want no debug output, 1 if we want all debug
+    private boolean outputDebug = true; // set to false if we want no debug output, true if we want all debug
+    // Clock offset manager
+    private ClockOffsetManager offsetManager = new ClockOffsetManager();
 
     private Writer writer;
     private Reader reader;
@@ -45,8 +47,8 @@ public class LinkLayer implements Dot11Interface
         this.ourMAC = ourMAC;
         this.output = output;
         // Initialize threads
-        writer = new Writer(theRF, sendQueue, ackQueue, ourMAC, output);
-        reader = new Reader(theRF, sendQueue, ackQueue, output, ourMAC, incQueue);
+        writer = new Writer(theRF, sendQueue, ackQueue, ourMAC, output, offsetManager);
+        reader = new Reader(theRF, sendQueue, ackQueue, output, ourMAC, incQueue, offsetManager);
         // start threads
         Thread writerThread = new Thread(writer);
         Thread readerThread = new Thread(reader);
@@ -75,19 +77,19 @@ public class LinkLayer implements Dot11Interface
         short seq = 0;
         //Checking sequence numbers
         if (sequenceDict.get(dest) != null) {
-        	
-        	seq = sequenceDict.get(dest);
-        	sequenceDict.put(dest, (short)(seq + 1));
+
+            seq = sequenceDict.get(dest);
+            sequenceDict.put(dest, (short)(seq + 1));
         }else {
-        	// if the dest hasn't been transmitted to yet, then we add a hashmap entry for the next time it is called
-        	sequenceDict.put(dest, (short)1);
+            // if the dest hasn't been transmitted to yet, then we add a hashmap entry for the next time it is called
+            sequenceDict.put(dest, (short)1);
         }
-        
+
         Frame outgoingFrame = new Frame(0, seq, dest, ourMAC, data);
         sendQueue.offer(outgoingFrame);
-        
+
         status = 1;
-        return 0;
+        return len;
     }
 
     /**
@@ -97,14 +99,14 @@ public class LinkLayer implements Dot11Interface
 
     public int recv(Transmission t) {
         // Create the Reader thread
-        output.println("LinkLayer: Attempting to recieve data");
+        printDebug("LinkLayer: Attempting to recieve data");
         // Check If incQueue 
         while (true)
             while (incQueue.peek() != null) {
                 try
                 {
                     t = incQueue.take();
-                    output.println("LinkLayer: Found Val in Incoming Queue");
+                    printDebug("LinkLayer: Found Val in Incoming Queue");
                     // set status to good
                     status = 1;
                     //Figure out if its too big
@@ -135,14 +137,22 @@ public class LinkLayer implements Dot11Interface
         if (cmd == 0) {
             output.println("-------------- Commands and Settings -----------------");
             output.println("Cmd #0: Display command options and current settings");
-            output.println("Cmd #1: Set debug level.  Currently at " + this.debug + "\n        Use 1 for full debug output, 0 for no output");
+            output.println("Cmd #1: Set debug level.  Currently at " + this.outputDebug + "\n        Use 1 for full debug output, 0 for no output");
             output.println("Cmd #2: Set slot selection method.  Currently " + (writer.getUseMaxCw() ? "max" : "random") + "\n        Use 0 for random slot selection, any other value to use maxCW");
             output.println("Cmd #3: Set beacon interval.  Currently at " + writer.getBeaconInterval() + " seconds" + "\n        Value specifies seconds between the start of beacons; -1 disables");
             output.println("------------------------------------------------------");
             return 0;
         } else if (cmd == 1) {
-            if (val == 0 || val == 1) {
-                debug = val;
+            if (val == 0) {
+                outputDebug = false;
+                writer.setDebug(false);
+                reader.setDebug(false);
+                output.println("Setting debug to " + val);
+                return 0;
+            } else if (val == 1) {
+                outputDebug = true;
+                writer.setDebug(true);
+                reader.setDebug(true);
                 output.println("Setting debug to " + val);
                 return 0;
             } else {
@@ -172,5 +182,12 @@ public class LinkLayer implements Dot11Interface
         }
         output.println("Command not recognized");
         return -1;
+    }
+    
+    private void printDebug(String message) {
+        if (outputDebug) {
+            output.println("LinkLayer: " + message);
+            output.flush();
+        }
     }
 }
